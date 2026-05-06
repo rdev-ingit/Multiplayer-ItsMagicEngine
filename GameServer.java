@@ -15,8 +15,17 @@ public class GameServer {
     public static void main(String[] args) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);
 
+        // CORS helper
+        java.util.function.Consumer<HttpExchange> addCors = ex -> {
+            ex.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
+            ex.getResponseHeaders().add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+            ex.getResponseHeaders().add("Access-Control-Allow-Headers", "*");
+        };
+
         // Jogador envia sua posição
         server.createContext("/update", exchange -> {
+            addCors.accept(exchange);
+            if (exchange.getRequestMethod().equals("OPTIONS")) { exchange.sendResponseHeaders(204, -1); return; }
             if (!exchange.getRequestMethod().equals("POST")) { exchange.sendResponseHeaders(405, -1); return; }
 
             String body = new String(exchange.getRequestBody().readAllBytes());
@@ -34,6 +43,8 @@ public class GameServer {
 
         // Jogador busca estados dos outros
         server.createContext("/players", exchange -> {
+            addCors.accept(exchange);
+            if (exchange.getRequestMethod().equals("OPTIONS")) { exchange.sendResponseHeaders(204, -1); return; }
             if (!exchange.getRequestMethod().equals("GET")) { exchange.sendResponseHeaders(405, -1); return; }
 
             String meuId = exchange.getRequestURI().getQuery(); // ?meuId
@@ -61,4 +72,4 @@ public class GameServer {
         server.start();
         System.out.println("Servidor rodando na porta " + PORT);
     }
-    }
+}
