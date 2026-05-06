@@ -1,3 +1,4 @@
+import com.sun.net.httpserver.*;
 import java.io.*;
 import java.net.*;
 import java.util.*;
@@ -5,48 +6,59 @@ import java.util.concurrent.*;
 
 public class GameServer {
 
-    static final int PORT = 9999;
-    static Map<String, PrintWriter> clientes = new ConcurrentHashMap<>();
+    static final int PORT = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
+
+    // Armazena o último estado de cada jogador
+    static Map<String, String> estados = new ConcurrentHashMap<>();
+    static Map<String, Long> ultimaVez = new ConcurrentHashMap<>();
 
     public static void main(String[] args) throws IOException {
-        System.out.println("Servidor rodando na porta " + PORT);
-        ServerSocket server = new ServerSocket(PORT);
+        HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);
 
-        while (true) {
-            Socket socket = server.accept();
-            new Thread(() -> handleCliente(socket)).start();
-        }
-    }
+        // Jogador envia sua posição
+        server.createContext("/update", exchange -> {
+            if (!exchange.getRequestMethod().equals("POST")) { exchange.sendResponseHeaders(405, -1); return; }
 
-    static void handleCliente(Socket socket) {
-        String id = null;
-        try {
-            BufferedReader in = new BufferedReader(
-                new InputStreamReader(socket.getInputStream()));
-            PrintWriter out = new PrintWriter(socket.getOutputStream(), true);
+            String body = new String(exchange.getRequestBody().readAllBytes());
+            // Formato: "id|x|y|z|rotX|rotY|anim"
+            String[] partes = body.split("\\|");
+            if (partes.length >= 7) {
+                String id = partes[0];
+                estados.put(id, body);
+                ultimaVez.put(id, System.currentTimeMillis());
+            }
 
-            // Primeira mensagem = ID do jogador
-            id = in.readLine();
-            clientes.put(id, out);
-            System.out.println("Jogador conectado: " + id);
+            exchange.sendResponseHeaders(200, 0);
+            exchange.getResponseBody().close();
+        });
 
-            String linha;
-            while ((linha = in.readLine()) != null) {
-                // Formato recebido: "ID|x|y|z|rotX|rotY|anim"
-                final String msg = id + "|" + linha;
+        // Jogador busca estados dos outros
+        server.createContext("/players", exchange -> {
+            if (!exchange.getRequestMethod().equals("GET")) { exchange.sendResponseHeaders(405, -1); return; }
 
-                // Envia para todos os outros clientes
-                for (Map.Entry<String, PrintWriter> entry : clientes.entrySet()) {
-                    if (!entry.getKey().equals(id)) {
-                        entry.getValue().println(msg);
-                    }
+            String meuId = exchange.getRequestURI().getQuery(); // ?meuId
+            long agora = System.currentTimeMillis();
+
+            StringBuilder sb = new StringBuilder();
+            for (Map.Entry<String, String> entry : estados.entrySet()) {
+                // Remove jogadores inativos há mais de 5 segundos
+                if (agora - ultimaVez.getOrDefault(entry.getKey(), 0L) > 5000) {
+                    estados.remove(entry.getKey());
+                    continue;
+                }
+                if (!entry.getKey().equals(meuId)) {
+                    sb.append(entry.getValue()).append("\n");
                 }
             }
 
-        } catch (IOException e) {
-            System.out.println("Jogador desconectado: " + id);
-        } finally {
-            if (id != null) clientes.remove(id);
-        }
+            byte[] resp = sb.toString().getBytes();
+            exchange.sendResponseHeaders(200, resp.length);
+            exchange.getResponseBody().write(resp);
+            exchange.getResponseBody().close();
+        });
+
+        server.setExecutor(Executors.newCachedThreadPool());
+        server.start();
+        System.out.println("Servidor rodando na porta " + PORT);
     }
-}
+    }
