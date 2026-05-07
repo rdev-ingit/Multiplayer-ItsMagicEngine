@@ -1,74 +1,62 @@
-import com.sun.net.httpserver.*;
-import java.io.*;
-import java.net.*;
-import java.util.*;
-import java.util.concurrent.*;
+import org.java_websocket.server.WebSocketServer;
+import org.java_websocket.WebSocket;
+import org.java_websocket.handshake.ClientHandshake;
 
-public class GameServer {
+import java.net.InetSocketAddress;
+import java.util.concurrent.ConcurrentHashMap;
 
-    static final int PORT = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
-    static Map<String, String> estados = new ConcurrentHashMap<>();
-    static Map<String, Long> ultimaVez = new ConcurrentHashMap<>();
+public class GameServer extends WebSocketServer {
 
-    public static void main(String[] args) throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);
+    private static ConcurrentHashMap<WebSocket, String> players = new ConcurrentHashMap<>();
 
-        server.createContext("/", exchange -> {
-            String method = exchange.getRequestMethod();
-            String path = exchange.getRequestURI().getPath();
+    public GameServer(int port) {
+        super(new InetSocketAddress(port));
+    }
 
-            // CORS sempre primeiro
-            Headers h = exchange.getResponseHeaders();
-            h.add("Access-Control-Allow-Origin", "*");
-            h.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-            h.add("Access-Control-Allow-Headers", "Content-Type, Accept");
+    @Override
+    public void onOpen(WebSocket conn, ClientHandshake handshake) {
+        System.out.println("Novo jogador conectado");
+    }
 
-            // Preflight
-            if (method.equals("OPTIONS")) {
-                exchange.sendResponseHeaders(204, -1);
-                return;
+    @Override
+    public void onClose(WebSocket conn, int code, String reason, boolean remote) {
+        players.remove(conn);
+        System.out.println("Jogador desconectado");
+    }
+
+    @Override
+    public void onMessage(WebSocket conn, String message) {
+
+        players.put(conn, message);
+
+        // retransmite para TODOS menos quem enviou
+        for (WebSocket client : players.keySet()) {
+            if (client != conn && client.isOpen()) {
+                client.send(message);
             }
+        }
+    }
 
-            if (path.equals("/update") && method.equals("POST")) {
-                String body = new String(exchange.getRequestBody().readAllBytes());
-                String[] partes = body.split("\\|");
-                if (partes.length >= 7) {
-                    String id = partes[0].trim();
-                    if (!id.isEmpty()) {
-                        estados.put(id, body);
-                        ultimaVez.put(id, System.currentTimeMillis());
-                    }
-                }
-                exchange.sendResponseHeaders(200, 0);
-                exchange.getResponseBody().close();
+    @Override
+    public void onError(WebSocket conn, Exception ex) {
+        ex.printStackTrace();
+    }
 
-            } else if (path.equals("/players") && method.equals("GET")) {
-                String meuId = exchange.getRequestURI().getQuery();
-                long agora = System.currentTimeMillis();
+    @Override
+    public void onStart() {
+        System.out.println("Servidor iniciado");
+    }
 
-                StringBuilder sb = new StringBuilder();
-                for (Map.Entry<String, String> entry : new HashMap<>(estados).entrySet()) {
-                    if (agora - ultimaVez.getOrDefault(entry.getKey(), 0L) > 5000) {
-                        estados.remove(entry.getKey());
-                        continue;
-                    }
-                    if (!entry.getKey().equals(meuId)) {
-                        sb.append(entry.getValue()).append("\n");
-                    }
-                }
+    public static void main(String[] args) {
 
-                byte[] resp = sb.toString().getBytes();
-                exchange.sendResponseHeaders(200, resp.length);
-                exchange.getResponseBody().write(resp);
-                exchange.getResponseBody().close();
+        int port = Integer.parseInt(
+            System.getenv().getOrDefault("PORT", "8080")
+        );
 
-            } else {
-                exchange.sendResponseHeaders(404, -1);
-            }
-        });
+        GameServer server = new GameServer(port);
 
-        server.setExecutor(Executors.newCachedThreadPool());
         server.start();
-        System.out.println("Servidor rodando na porta " + PORT);
+
+        System.out.println("Rodando porta " + port);
     }
 }
