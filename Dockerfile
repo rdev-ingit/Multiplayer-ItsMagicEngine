@@ -1,6 +1,11 @@
-FROM eclipse-temurin:17-jdk-alpine
+FROM maven:3.9.6-eclipse-temurin-17
+
 WORKDIR /app
-COPY GameServer.java .
-RUN javac GameServer.java
+
+COPY . .
+
+RUN mvn clean package
+
 EXPOSE 8080
-CMD ["java", "GameServer"]
+
+CMD ["java", "-jar", "target/server-1.0.jar"]
